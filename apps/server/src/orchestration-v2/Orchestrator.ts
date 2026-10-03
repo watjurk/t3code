@@ -369,6 +369,9 @@ function commandThreadId(command: OrchestrationV2ServerCommand): ThreadId {
     case "thread.active.reorder":
     case "thread.visit":
     case "thread.mark-unread":
+    case "external-wait.complete":
+    case "external-wait.register":
+    case "external-wait.cancel":
     case "thread.metadata.update":
     case "thread.pull-request.link":
     case "thread.pull-request.unlink":
@@ -2295,6 +2298,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           | "thread.pin.reorder"
           | "thread.active.reorder"
           | "thread.mark-unread"
+          | "external-wait.register"
+          | "external-wait.cancel"
           | "thread.metadata.update"
           | "thread.pull-request.link"
           | "thread.pull-request.unlink"
@@ -2328,6 +2333,17 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         cause: `Thread ${command.threadId} is deleted.`,
       });
     }
+    if (
+      command.type === "external-wait.register" &&
+      (thread.archivedAt !== null || isProviderNativeSubagentThread(thread))
+    ) {
+      return yield* new OrchestratorDispatchError({
+        commandId: command.commandId,
+        commandType: command.type,
+        cause: "External work requires an unarchived root thread.",
+      });
+    }
+
     if (
       command.type === "thread.pull-request.watch" &&
       command.watching &&
@@ -2642,7 +2658,13 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     const updatedThread: OrchestrationV2AppThread = (() => {
       switch (command.type) {
         case "thread.archive":
-          return { ...thread, archivedAt: now, titleRegeneration: null, updatedAt: now };
+          return {
+            ...thread,
+            externalWaiters: [],
+            archivedAt: now,
+            titleRegeneration: null,
+            updatedAt: now,
+          };
         case "thread.unarchive":
           return { ...thread, archivedAt: null, updatedAt: now };
         case "thread.settle": {
@@ -2653,6 +2675,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             thread.settledOverride === "settled" && thread.settledAt !== null && !wasPinned;
           return {
             ...thread,
+            externalWaiters: [],
             settledOverride: "settled",
             settledAt: alreadySettled ? thread.settledAt : (command.settledAt ?? now),
             unsettledAt: null,
@@ -2758,6 +2781,24 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         }
         case "thread.mark-unread":
           return { ...thread, lastVisitedAt: markUnreadVisitedAt };
+        case "external-wait.register": {
+          const waiters = thread.externalWaiters ?? [];
+          return {
+            ...thread,
+            externalWaiters: waiters.some((waiter) => waiter.id === command.waiterId)
+              ? waiters
+              : [...waiters, { id: command.waiterId, title: command.title }],
+            updatedAt: now,
+          };
+        }
+        case "external-wait.cancel":
+          return {
+            ...thread,
+            externalWaiters: (thread.externalWaiters ?? []).filter(
+              (waiter) => waiter.id !== command.waiterId,
+            ),
+            updatedAt: now,
+          };
         case "thread.metadata.update": {
           const previousRecovery =
             thread.limitRecovery?.runId === command.limitRecovery?.runId &&
@@ -3065,6 +3106,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           return "thread.active-reordered" as const;
         case "thread.mark-unread":
           return "thread.marked-unread" as const;
+        case "external-wait.register":
+        case "external-wait.cancel":
         case "thread.metadata.update":
         case "thread.title.regeneration.complete":
           return "thread.metadata-updated" as const;
@@ -4284,6 +4327,33 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
   ) =>
     Effect.gen(function* () {
       let projection = yield* getProjectionWithPendingEvents(command.threadId, events);
+      if (command.externalWaiterId !== undefined) {
+        if (
+          !(projection.thread.externalWaiters ?? []).some(
+            (waiter) => waiter.id === command.externalWaiterId,
+          )
+        )
+          return;
+        const now = yield* DateTime.now;
+        const thread = {
+          ...projection.thread,
+          externalWaiters: (projection.thread.externalWaiters ?? []).filter(
+            (waiter) => waiter.id !== command.externalWaiterId,
+          ),
+          updatedAt: now,
+        };
+        yield* emit(
+          events,
+          command,
+        )({
+          type: "thread.metadata-updated",
+          threadId: command.threadId,
+          occurredAt: now,
+          payload: thread,
+        });
+        projection = { ...projection, thread };
+      }
+
       if (command.manualContinuationOfRunId !== undefined) {
         const source = projection.runs.find((run) => run.id === command.manualContinuationOfRunId);
         const limited = latestRootProviderFailure(source ?? null, projection.turnItems);
@@ -9272,6 +9342,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       case "thread.pin.reorder":
       case "thread.active.reorder":
       case "thread.mark-unread":
+      case "external-wait.register":
+      case "external-wait.cancel":
       case "thread.metadata.update":
       case "thread.pull-request.link":
       case "thread.pull-request.unlink":
@@ -9290,6 +9362,25 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         break;
       case "provider-session.detach":
         yield* dispatchProviderSessionDetach(command, events, effects);
+        break;
+      case "external-wait.complete":
+        yield* dispatchMessage(
+          {
+            type: "message.dispatch",
+            commandId: command.commandId,
+            threadId: command.threadId,
+            messageId: command.messageId,
+            text: command.text,
+            externalWaiterId: command.waiterId,
+            attachments: [],
+            createdBy: "agent",
+            creationSource: "mcp",
+            deliveryIntent: "auto",
+            dispatchMode: { type: "start_immediately" },
+          },
+          events,
+          effects,
+        );
         break;
       case "message.dispatch": {
         // The provider owns a native subagent's conversation, so a sent
@@ -9505,7 +9596,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       Effect.flatMap((planned) =>
         // A settle that finds the provider already ended everything has
         // nothing to record, which is its expected outcome, not a failure.
-        planned.events.length > 0 || command.type === "thread.background-work.settle"
+        planned.events.length > 0 ||
+        command.type === "thread.background-work.settle" ||
+        command.type === "external-wait.complete"
           ? Effect.succeed(planned)
           : Effect.fail(
               new OrchestratorDispatchError({

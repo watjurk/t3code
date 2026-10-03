@@ -1,5 +1,6 @@
 import {
   AuthOrchestrationReadScope,
+  AuthOrchestrationOperateScope,
   EnvironmentHttpApi,
   ThreadId,
   TurnItemId,
@@ -168,6 +169,16 @@ export const orchestrationHttpApiLayer = HttpApiBuilder.group(
     );
 
     return handlers
+      .handle(
+        "dispatchCommand",
+        Effect.fn("environment.orchestration.dispatchCommand")(function* (args) {
+          yield* annotateEnvironmentRequest(args.endpoint.name);
+          yield* requireEnvironmentScope(AuthOrchestrationOperateScope);
+          return yield* threadManagement
+            .dispatch(args.payload)
+            .pipe(Effect.catch(() => failEnvironmentInvalidRequest("invalid_command")));
+        }),
+      )
       .handle(
         "shellSnapshot",
         Effect.fn("environment.orchestration.shellSnapshot")(function* (args) {

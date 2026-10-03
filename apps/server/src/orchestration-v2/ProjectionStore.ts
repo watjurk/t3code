@@ -187,6 +187,7 @@ export type ProjectionSettlementCandidate = Pick<
   | "activityRunStatus"
   | "pendingRuntimeRequest"
   | "pendingBackgroundTasks"
+  | "externalWaiters"
 >;
 
 const ProjectionCheckpointContext = Schema.Struct({
@@ -1371,7 +1372,12 @@ export function threadShellFromProjection(
     activityRunStatus: activityRun?.status ?? null,
     activityRunStartedAt:
       activityRun === null ? null : orchestrationV2RunWorkStartedAt(activityRun),
-    status: latestRun?.status ?? "idle",
+    externalWaiters: projection.thread.externalWaiters,
+    status: externalWaitStatus(
+      projection.thread,
+      latestRun?.status ?? "idle",
+      activeRun?.id ?? null,
+    ),
     ...threadErrorSummary(
       latestRootProviderFailure(latestRun, projection.turnItems),
       providerSession?.lastError ?? null,
@@ -1481,6 +1487,18 @@ type ShellThreadState = {
   readonly runOrdinalById: ReadonlyMap<RunId, number>;
   readonly itemCountByRunId: ReadonlyMap<RunId, number>;
 };
+
+function externalWaitStatus(
+  thread: OrchestrationV2AppThread,
+  status: OrchestrationV2ShellThreadStatus,
+  activeRunId: RunId | null,
+): OrchestrationV2ShellThreadStatus {
+  return activeRunId === null &&
+    (thread.externalWaiters?.length ?? 0) > 0 &&
+    (status === "idle" || status === "completed" || status === "waiting")
+    ? "waiting"
+    : status;
+}
 
 function shellStatusFromStoredRunStatus(status: string | null): OrchestrationV2ShellThreadStatus {
   switch (status) {
@@ -1603,7 +1621,12 @@ function shellFromState(input: {
     activeRunId: input.state.activeRunId,
     activityRunStatus: input.state.activityRunStatus,
     activityRunStartedAt: input.state.activityRunStartedAt,
-    status: input.state.latestRunStatus,
+    externalWaiters: input.state.thread.externalWaiters,
+    status: externalWaitStatus(
+      input.state.thread,
+      input.state.latestRunStatus,
+      input.state.activeRunId,
+    ),
     lastError: input.state.lastError,
     lastErrorClass: input.state.lastErrorClass,
     usageLimitResetAt: input.state.usageLimitResetAt,

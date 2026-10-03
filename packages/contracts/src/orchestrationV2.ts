@@ -356,6 +356,15 @@ export type OrchestrationV2LimitRecoveryUpdate = typeof OrchestrationV2LimitReco
 
 export const OrchestrationV2AppThread = Schema.Struct({
   ...OrchestrationV2CreationFields,
+  /** Durable external work; completion removes the waiter in the wake transaction. */
+  externalWaiters: Schema.optional(
+    Schema.Array(
+      Schema.Struct({
+        id: TrimmedNonEmptyString,
+        title: TrimmedNonEmptyString,
+      }),
+    ),
+  ),
   id: ThreadId,
   projectId: ProjectId,
   title: TrimmedNonEmptyString,
@@ -1684,6 +1693,7 @@ export type OrchestrationV2LatestVisibleMessageSummary =
 
 export const OrchestrationV2ThreadShell = Schema.Struct({
   ...OrchestrationV2CreationFields,
+  externalWaiters: OrchestrationV2AppThread.fields.externalWaiters,
   id: ThreadId,
   projectId: ProjectId,
   title: Schema.String,
@@ -2435,7 +2445,33 @@ export const OrchestrationV2StoredEventJson = Schema.Struct({
 });
 export type OrchestrationV2StoredEventJson = typeof OrchestrationV2StoredEventJson.Type;
 
+export const OrchestrationV2ExternalWaitCommand = Schema.Union([
+  Schema.Struct({
+    type: Schema.Literal("external-wait.register"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    waiterId: TrimmedNonEmptyString,
+    title: TrimmedNonEmptyString,
+  }),
+  Schema.Struct({
+    type: Schema.Literal("external-wait.cancel"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    waiterId: TrimmedNonEmptyString,
+  }),
+  Schema.Struct({
+    type: Schema.Literal("external-wait.complete"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    waiterId: TrimmedNonEmptyString,
+    messageId: MessageId,
+    text: TrimmedNonEmptyString,
+  }),
+]);
+export type OrchestrationV2ExternalWaitCommand = typeof OrchestrationV2ExternalWaitCommand.Type;
+
 export const OrchestrationV2Command = Schema.Union([
+  ...OrchestrationV2ExternalWaitCommand.members,
   Schema.Struct({
     type: Schema.Literal("thread.create"),
     ...OrchestrationV2CreationFields,
@@ -2663,6 +2699,8 @@ export const OrchestrationV2Command = Schema.Union([
   }),
   Schema.Struct({
     type: Schema.Literal("message.dispatch"),
+    /** Complete this waiter atomically with delivery; cancelled waiters never wake. */
+    externalWaiterId: Schema.optional(TrimmedNonEmptyString),
     notification: Schema.optional(OrchestrationV2Notification),
     ...OrchestrationV2CreationFields,
     scheduledTaskId: Schema.optional(ScheduledTaskId),

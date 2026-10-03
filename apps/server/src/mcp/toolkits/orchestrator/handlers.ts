@@ -78,6 +78,12 @@ const handlers = {
       const service = yield* ThreadMetadataMcpService.ThreadMetadataMcpService;
       return yield* service.update(scope, input);
     }),
+  t3_external_wait: (input) =>
+    Effect.gen(function* () {
+      const scope = yield* McpInvocationContext.McpInvocationContext;
+      const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+      return yield* service.externalWait(scope, input.command);
+    }),
   t3_thread_send: (input) =>
     Effect.gen(function* () {
       const scope = yield* McpInvocationContext.McpInvocationContext;

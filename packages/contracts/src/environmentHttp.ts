@@ -36,6 +36,8 @@ import {
   TrimmedNonEmptyString,
 } from "./baseSchemas.ts";
 import {
+  OrchestrationV2ExternalWaitCommand,
+  OrchestrationV2DispatchCommandResult,
   OrchestrationV2ShellSnapshot,
   OrchestrationV2ThreadBoundedSnapshot,
   OrchestrationV2ThreadDetailSnapshot,
@@ -524,6 +526,14 @@ const EnvironmentOrchestrationThreadHistoryErrors = [
 ] as const;
 
 class EnvironmentOrchestrationHttpApi extends HttpApiGroup.make("orchestration")
+  .add(
+    HttpApiEndpoint.post("dispatchCommand", "/api/orchestration/waiters", {
+      headers: OrchestrationProtocolHeaders,
+      payload: OrchestrationV2ExternalWaitCommand,
+      success: OrchestrationV2DispatchCommandResult,
+      error: EnvironmentOrchestrationThreadHistoryErrors,
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
   .add(
     HttpApiEndpoint.get("shellSnapshot", "/api/orchestration/shell", {
       headers: OrchestrationProtocolHeaders,

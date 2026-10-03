@@ -105,6 +105,7 @@ export interface EnvironmentThreadShell {
   readonly hasPendingApprovals: boolean;
   readonly hasPendingUserInput: boolean;
   readonly hasActionableProposedPlan: boolean;
+  readonly externalWaiters?: OrchestrationV2ThreadShell["externalWaiters"];
   readonly pendingBackgroundTasks: ReadonlyArray<
     NonNullable<OrchestrationV2ThreadShell["pendingBackgroundTasks"]>[number]
   >;
@@ -169,9 +170,14 @@ function terminalRunStatus(status: OrchestrationV2RunStatus): boolean {
 // latestRun keeps the latest run's status for history presentation.
 // A failed latest run outranks the roster, so the failure stays visible.
 function shellRuntime(thread: OrchestrationV2ThreadShell): ThreadRuntimeSummary | null {
-  if (thread.latestRunId === null && thread.activeProviderThreadId === null) return null;
+  const externalWaiting =
+    (thread.externalWaiters?.length ?? 0) > 0 &&
+    thread.activeRunId === null &&
+    thread.status !== "failed";
+  if (thread.latestRunId === null && thread.activeProviderThreadId === null && !externalWaiting)
+    return null;
   const parkAtIdle =
-    backgroundWorkHoldsCompletion(thread.pendingBackgroundTasks ?? []) &&
+    (externalWaiting || backgroundWorkHoldsCompletion(thread.pendingBackgroundTasks ?? [])) &&
     thread.status !== "failed";
   const status = parkAtIdle ? "idle" : (thread.activityRunStatus ?? thread.status);
   return {
@@ -247,6 +253,7 @@ export function presentThreadShell(
       thread.pendingRuntimeRequest.kind !== "auth_refresh",
     hasPendingUserInput: thread.pendingRuntimeRequest?.kind === "user_input",
     hasActionableProposedPlan: thread.hasActionableProposedPlan,
+    externalWaiters: thread.externalWaiters ?? [],
     pendingBackgroundTasks: thread.pendingBackgroundTasks ?? [],
     providerInstanceHistory: thread.providerInstanceHistory ?? [],
     itemCount: thread.itemCount,

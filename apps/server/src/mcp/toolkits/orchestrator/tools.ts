@@ -1,4 +1,6 @@
 import {
+  OrchestrationV2ExternalWaitCommand,
+  OrchestrationV2DispatchCommandResult,
   OrchestratorMcpCapabilitiesResult,
   OrchestratorMcpCreateThreadsInput,
   OrchestratorMcpCreateThreadsResult,
@@ -27,6 +29,7 @@ import {
   ThreadMetadataMcpUpdateInput,
   ThreadMetadataMcpUpdateResult,
 } from "@t3tools/contracts";
+import * as Schema from "effect/Schema";
 import { Tool, Toolkit } from "effect/unstable/ai";
 
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
@@ -237,7 +240,21 @@ const ThreadInterruptTool = Tool.make("t3_thread_interrupt", {
   .annotate(Tool.Title, "Interrupt a T3 thread")
   .annotate(Tool.Destructive, true);
 
+const ExternalWaitTool = Tool.make("t3_external_wait", {
+  description:
+    "Register, complete or cancel durable external work on a thread. A registered waiter shows waiting after the agent turn ends. Complete atomically removes it and delivers the result to the same thread; a cancelled waiter never wakes. Reuse commandId when retrying. This does not start a subagent or execute the external work.",
+  parameters: Schema.Struct({ command: OrchestrationV2ExternalWaitCommand }),
+  success: OrchestrationV2DispatchCommandResult,
+  failure: OrchestratorMcpFailure,
+  failureMode: "return",
+  dependencies,
+})
+  .annotate(Tool.Title, "Manage an external waiter")
+  .annotate(Tool.Destructive, true)
+  .annotate(Tool.Idempotent, true);
+
 export const OrchestratorToolkit = Toolkit.make(
+  ExternalWaitTool,
   OrchestratorCapabilitiesTool,
   DelegateTaskTool,
   TaskStatusTool,

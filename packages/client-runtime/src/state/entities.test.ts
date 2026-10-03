@@ -155,6 +155,31 @@ describe("V2 client presentation", () => {
     ]);
   });
 
+  it("presents external waiting on all clients without claiming an active agent is idle", () => {
+    for (const latestRunId of [null, RunId.make("run:external")]) {
+      const shell = presentThreadShell(environmentId, {
+        ...v2ThreadShell,
+        latestRunId,
+        activeProviderThreadId: null,
+        activeRunId: null,
+        activityRunStatus: null,
+        status: "waiting",
+        externalWaiters: [{ id: "ci", title: "CI" }],
+      });
+      expect(shell.runtime?.status).toBe("idle");
+      expect(shell.externalWaiters).toEqual([{ id: "ci", title: "CI" }]);
+    }
+    const active = presentThreadShell(environmentId, {
+      ...v2ThreadShell,
+      latestRunId: RunId.make("active"),
+      activeRunId: RunId.make("active"),
+      activityRunStatus: "running",
+      status: "running",
+      externalWaiters: [{ id: "ci", title: "CI" }],
+    });
+    expect(active.runtime?.status).toBe("running");
+  });
+
   it.each([
     { kinds: ["command"], expected: "completed" },
     { kinds: ["command", "subagent"], expected: "idle" },

@@ -1,4 +1,6 @@
 import {
+  type OrchestrationV2ExternalWaitCommand,
+  type OrchestrationV2DispatchCommandResult,
   CommandId,
   type RunId,
   isProviderAvailable,
@@ -131,6 +133,10 @@ export interface OrchestratorMcpServiceShape {
     scope: McpInvocationScope,
     input: OrchestratorMcpThreadReadInput,
   ) => Effect.Effect<OrchestratorMcpThreadReadResult, OrchestratorMcpFailure>;
+  readonly externalWait: (
+    scope: McpInvocationScope,
+    input: OrchestrationV2ExternalWaitCommand,
+  ) => Effect.Effect<OrchestrationV2DispatchCommandResult, OrchestratorMcpFailure>;
   readonly sendToThread: (
     scope: McpInvocationScope,
     input: OrchestratorMcpThreadSendInput,
@@ -1829,6 +1835,16 @@ const make = Effect.gen(function* () {
           nextPosition: page.at(-1)?.position ?? null,
           hasMore: timeline.hasMore,
         } satisfies OrchestratorMcpThreadReadResult;
+      }),
+    externalWait: (scope, input) =>
+      Effect.gen(function* () {
+        const { parent, target } = yield* loadScopedThread(scope, input.threadId);
+        yield* resolveRuntimeMode(parent.thread.runtimeMode, target.thread.runtimeMode);
+        yield* resolveInteractionMode(parent.thread.interactionMode, target.thread.interactionMode);
+        const result = yield* threadManagement
+          .dispatch(input)
+          .pipe(Effect.mapError((error) => failure("orchestration_error", errorMessage(error))));
+        return { sequence: result.sequence };
       }),
     sendToThread: (scope, input) =>
       Effect.gen(function* () {
