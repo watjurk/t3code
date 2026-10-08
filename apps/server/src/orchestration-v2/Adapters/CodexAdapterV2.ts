@@ -6492,10 +6492,17 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
           resumeThread: (threadInput) =>
             Effect.gen(function* () {
               const nativeThreadId = yield* getNativeThreadId(threadInput.providerThread);
+              yield* ensureInitialized;
+              // Codex otherwise restores the provider saved in the old session,
+              // bypassing current launch configuration (including stream recovery).
+              const configuration = yield* client.request("config/read", { includeLayers: false });
               // excludeTurns is not in the generated request schema yet.
               const resume = client.raw.request("thread/resume", {
                 threadId: nativeThreadId,
                 excludeTurns: true,
+                ...(configuration.config.model_provider == null
+                  ? {}
+                  : { modelProvider: configuration.config.model_provider }),
                 ...codexThreadRuntimeParams({
                   threadId: threadInput.threadId ?? threadInput.providerThread.appThreadId,
                   ...(threadInput.modelSelection === undefined
@@ -6506,26 +6513,20 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
                     : { runtimePolicy: threadInput.runtimePolicy }),
                 }),
               });
-              const response = yield* ensureInitialized.pipe(
-                Effect.andThen(
-                  resume.pipe(
-                    Effect.catchTags({
-                      CodexAppServerRequestError: (cause) => {
-                        if (
-                          !/\bsession \S+ is archived\b|\bcodex unarchive\b/i.test(
-                            cause.errorMessage,
-                          )
-                        ) {
-                          return Effect.fail(cause);
-                        }
-                        // Keep the session's history without decoding the unarchive response.
-                        return client.raw
-                          .request("thread/unarchive", { threadId: nativeThreadId })
-                          .pipe(Effect.andThen(resume));
-                      },
-                    }),
-                  ),
-                ),
+              const response = yield* resume.pipe(
+                Effect.catchTags({
+                  CodexAppServerRequestError: (cause) => {
+                    if (
+                      !/\bsession \S+ is archived\b|\bcodex unarchive\b/i.test(cause.errorMessage)
+                    ) {
+                      return Effect.fail(cause);
+                    }
+                    // Keep the session's history without decoding the unarchive response.
+                    return client.raw
+                      .request("thread/unarchive", { threadId: nativeThreadId })
+                      .pipe(Effect.andThen(resume));
+                  },
+                }),
                 Effect.flatMap(decodeCodexResumeMetadata),
               );
               // Codex follows a resume with a goal snapshot notification; the
@@ -7221,9 +7222,15 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
               // process. After a restart or idle release, load it the same way
               // the next turn would before reverting.
               if (!loaded) {
+                const configuration = yield* client.request("config/read", {
+                  includeLayers: false,
+                });
                 yield* client.raw.request("thread/resume", {
                   threadId,
                   excludeTurns: true,
+                  ...(configuration.config.model_provider == null
+                    ? {}
+                    : { modelProvider: configuration.config.model_provider }),
                   ...codexThreadRuntimeParams({
                     threadId: threadInput.providerThread.appThreadId,
                     modelSelection: input.modelSelection,

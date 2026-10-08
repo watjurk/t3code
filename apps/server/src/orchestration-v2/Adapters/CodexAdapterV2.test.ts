@@ -2878,52 +2878,68 @@ describe("CodexAdapterV2 post-settle continuation", () => {
     ),
   );
 
-  it.effect("resumes a provider thread without requesting or decoding its history", () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const scenario = "codex-resume-metadata";
-        const nativeThreadId = `native-${scenario}-thread`;
-        const preamble = codexReplayPreamble({
-          nativeThreadId,
-          nativeTurnId: "unused-turn",
-          prompt: "unused-prompt",
-        }).slice(0, 5);
-        const transcript = makeCodexReplayTranscript({
-          scenario,
-          entries: [
-            ...preamble,
-            {
-              type: "expect_outbound",
-              label: "thread/resume",
-              frame: {
-                id: 3,
-                method: "thread/resume",
-                params: {
-                  threadId: nativeThreadId,
-                  excludeTurns: true,
-                  config: CodexAdapterV2.CODEX_THREAD_CONFIG,
+  it.effect.each([undefined, "openai", "configured-recovery-provider"])(
+    "resumes without history using the configured provider %s",
+    (modelProvider) =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const scenario = "codex-resume-metadata";
+          const nativeThreadId = `native-${scenario}-thread`;
+          const preamble = codexReplayPreamble({
+            nativeThreadId,
+            nativeTurnId: "unused-turn",
+            prompt: "unused-prompt",
+          }).slice(0, 5);
+          const transcript = makeCodexReplayTranscript({
+            scenario,
+            entries: [
+              ...preamble,
+              {
+                type: "expect_outbound",
+                label: "configured provider",
+                frame: { id: 3, method: "config/read", params: { includeLayers: false } },
+              },
+              {
+                type: "emit_inbound",
+                label: "configured provider",
+                frame: {
+                  id: 3,
+                  result: { config: { model_provider: modelProvider }, origins: {} },
                 },
               },
-            },
-            {
-              type: "emit_inbound",
-              label: "thread/resume",
-              frame: { id: 3, result: { thread: { id: nativeThreadId, updatedAt: 1782622450 } } },
-            },
-          ],
-        });
-        const harness = yield* makeCodexReplayHarness(transcript);
-        const resumed = yield* harness.runtime.resumeThread({
-          providerThread: harness.providerThread,
-          modelSelection: CODEX_TEST_MODEL_SELECTION,
-          runtimePolicy: CODEX_TEST_RUNTIME_POLICY,
-        });
+              {
+                type: "expect_outbound",
+                label: "thread/resume",
+                frame: {
+                  id: 4,
+                  method: "thread/resume",
+                  params: {
+                    threadId: nativeThreadId,
+                    excludeTurns: true,
+                    ...(modelProvider === undefined ? {} : { modelProvider }),
+                    config: CodexAdapterV2.CODEX_THREAD_CONFIG,
+                  },
+                },
+              },
+              {
+                type: "emit_inbound",
+                label: "thread/resume",
+                frame: { id: 4, result: { thread: { id: nativeThreadId, updatedAt: 1782622450 } } },
+              },
+            ],
+          });
+          const harness = yield* makeCodexReplayHarness(transcript);
+          const resumed = yield* harness.runtime.resumeThread({
+            providerThread: harness.providerThread,
+            modelSelection: CODEX_TEST_MODEL_SELECTION,
+            runtimePolicy: CODEX_TEST_RUNTIME_POLICY,
+          });
 
-        assert.equal(resumed.nativeThreadRef?.nativeId, nativeThreadId);
-        assert.equal(resumed.status, "idle");
-        assert.equal(DateTime.toEpochMillis(resumed.updatedAt), 1782622450000);
-      }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
-    ),
+          assert.equal(resumed.nativeThreadRef?.nativeId, nativeThreadId);
+          assert.equal(resumed.status, "idle");
+          assert.equal(DateTime.toEpochMillis(resumed.updatedAt), 1782622450000);
+        }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+      ),
   );
 
   it.effect.each(
@@ -2984,6 +3000,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         const params = {
           threadId: nativeThreadId,
           excludeTurns: true,
+          modelProvider: "openai",
           cwd: CODEX_TEST_RUNTIME_POLICY.cwd,
           model: CODEX_TEST_MODEL_SELECTION.model,
           config: CodexAdapterV2.CODEX_THREAD_CONFIG,
@@ -2996,13 +3013,23 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           }).slice(0, 5),
           {
             type: "expect_outbound",
+            label: "configured provider",
+            frame: { id: 3, method: "config/read", params: { includeLayers: false } },
+          },
+          {
+            type: "emit_inbound",
+            label: "configured provider",
+            frame: { id: 3, result: { config: { model_provider: "openai" }, origins: {} } },
+          },
+          {
+            type: "expect_outbound",
             label: "resume archived thread",
-            frame: { id: 3, method: "thread/resume", params },
+            frame: { id: 4, method: "thread/resume", params },
           },
           {
             type: "emit_inbound",
             label: "resume error",
-            frame: { id: 3, error: { code: -32600, message: resumeError } },
+            frame: { id: 4, error: { code: -32600, message: resumeError } },
           },
         ];
         if (failAt !== 3) {
@@ -3010,15 +3037,15 @@ describe("CodexAdapterV2 post-settle continuation", () => {
             {
               type: "expect_outbound",
               label: "unarchive same thread",
-              frame: { id: 4, method: "thread/unarchive", params: { threadId: nativeThreadId } },
+              frame: { id: 5, method: "thread/unarchive", params: { threadId: nativeThreadId } },
             },
             {
               type: "emit_inbound",
               label: "unarchive result",
               frame:
                 failAt === 4
-                  ? { id: 4, error: { code: -32600, message: finalError } }
-                  : { id: 4, result: { thread: { turns: [{ type: "unknown-history-item" }] } } },
+                  ? { id: 5, error: { code: -32600, message: finalError } }
+                  : { id: 5, result: { thread: { turns: [{ type: "unknown-history-item" }] } } },
             },
           );
         }
@@ -3027,16 +3054,16 @@ describe("CodexAdapterV2 post-settle continuation", () => {
             {
               type: "expect_outbound",
               label: "retry identical resume",
-              frame: { id: 5, method: "thread/resume", params },
+              frame: { id: 6, method: "thread/resume", params },
             },
             {
               type: "emit_inbound",
               label: "retry result",
               frame:
                 failAt === 5
-                  ? { id: 5, error: { code: -32600, message: finalError } }
+                  ? { id: 6, error: { code: -32600, message: finalError } }
                   : {
-                      id: 5,
+                      id: 6,
                       result: {
                         thread: {
                           id: nativeThreadId,
@@ -3065,7 +3092,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
             "cause.method",
             failAt === 4 ? "thread/unarchive" : "thread/resume",
           );
-          assert.nestedPropertyVal(error, "cause.requestId", String(failAt));
+          assert.nestedPropertyVal(error, "cause.requestId", String(failAt + 1));
           return;
         }
         const resumed = yield* resume;
@@ -3098,13 +3125,27 @@ describe("CodexAdapterV2 post-settle continuation", () => {
             ...preamble,
             {
               type: "expect_outbound",
-              label: "resume",
+              label: "configured provider",
+              frame: { id: 3, method: "config/read", params: { includeLayers: false } },
+            },
+            {
+              type: "emit_inbound",
+              label: "configured provider",
               frame: {
                 id: 3,
+                result: { config: { model_provider: "configured-recovery-provider" }, origins: {} },
+              },
+            },
+            {
+              type: "expect_outbound",
+              label: "resume",
+              frame: {
+                id: 4,
                 method: "thread/resume",
                 params: {
                   threadId: nativeThreadId,
                   excludeTurns: true,
+                  modelProvider: "configured-recovery-provider",
                   config: CodexAdapterV2.CODEX_THREAD_CONFIG,
                 },
               },
@@ -3112,13 +3153,13 @@ describe("CodexAdapterV2 post-settle continuation", () => {
             {
               type: "emit_inbound",
               label: "resume",
-              frame: { id: 3, result: { thread: { id: nativeThreadId, updatedAt: 1782622450 } } },
+              frame: { id: 4, result: { thread: { id: nativeThreadId, updatedAt: 1782622450 } } },
             },
             {
               type: "expect_outbound",
               label: "continue",
               frame: {
-                id: 4,
+                id: 5,
                 method: "turn/start",
                 params: {
                   threadId: nativeThreadId,
@@ -3136,7 +3177,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
               type: "emit_inbound",
               label: "continue",
               frame: {
-                id: 4,
+                id: 5,
                 result: { turn: makeCodexReplayTurn({ id: nativeTurnId, status: "inProgress" }) },
               },
             },
