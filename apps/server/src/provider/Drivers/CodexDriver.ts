@@ -49,6 +49,7 @@ import {
   withCodexAppServerClient,
 } from "../CodexProvider.ts";
 import { resolveCodexLaunchArgs } from "../codexLaunchArgs.ts";
+import { getCodexDefaultReasoningEffort } from "../../codexModelOptions.ts";
 import { makeManagedServerProvider } from "../makeManagedServerProvider.ts";
 import * as ModelManifest from "../ModelManifest.ts";
 import type { ProviderDriver, ProviderInstance } from "../ProviderDriver.ts";
@@ -200,7 +201,13 @@ export const CodexDriver: ProviderDriver<CodexSettings, CodexDriverEnv> = {
           enabled,
           config,
         },
-        { onUsageLimits: (update) => snapshot.applyUsageLimits(update) },
+        {
+          onUsageLimits: (update) => snapshot.applyUsageLimits(update),
+          resolveDefaultReasoningEffort: (model) =>
+            snapshot.getSnapshot.pipe(
+              Effect.map((value) => getCodexDefaultReasoningEffort(value.models, model)),
+            ),
+        },
       ).pipe(
         Effect.mapError(
           (cause) =>

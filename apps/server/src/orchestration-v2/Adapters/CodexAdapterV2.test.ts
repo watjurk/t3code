@@ -516,6 +516,8 @@ describe("CodexAdapterV2 runtime policy", () => {
       });
 
       assert.equal(params.collaborationMode?.mode, "default");
+      assert.isUndefined(params.collaborationMode?.settings.reasoning_effort);
+      assert.notInclude(params.additionalContext?.t3_code_runtime?.value ?? "", "medium");
       assert.include(
         params.additionalContext?.t3_code_orchestration?.value ?? "",
         "Use `delegate_task`",
@@ -545,6 +547,32 @@ describe("CodexAdapterV2 runtime policy", () => {
       });
 
       assert.isUndefined(params.collaborationMode);
+    }),
+  );
+
+  it.effect("uses the composer's catalogue default and preserves explicit reasoning picks", () =>
+    Effect.gen(function* () {
+      for (const mode of ["default", "plan"] as const) {
+        for (const selected of [undefined, "high"] as const) {
+          const params = yield* CodexAdapterV2.buildCodexTurnStartParams({
+            nativeThreadId: "native-catalogue-default",
+            codexInput: [{ type: "text", text: "test" }],
+            runtimePolicy: { runtimeMode: "full-access", interactionMode: mode, cwd: null },
+            modelSelection: {
+              instanceId: ProviderInstanceId.make("codex"),
+              model: "gpt-6.1-sol",
+              ...(selected === undefined
+                ? {}
+                : { options: [{ id: "reasoningEffort", value: selected }] }),
+            },
+            defaultReasoningEffort: "low",
+            hasT3Mcp: true,
+          });
+          assert.equal(params.effort, selected ?? "low");
+          assert.equal(params.collaborationMode?.settings.reasoning_effort, selected ?? "low");
+          assert.include(params.additionalContext?.t3_code_runtime?.value ?? "", selected ?? "low");
+        }
+      }
     }),
   );
 
